@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "planloos-dev",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["C:\\Users\\ArmandM\\.planloos-deps\\start-planloos.mjs"],
+      "port": 5173
+    }
+  ]
+}
