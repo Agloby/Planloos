@@ -46,7 +46,7 @@ const LANG = {
     apiNote:"Not needed in Claude.ai. Required for standalone.",
     noGoals:"No goals yet", addGoal:"Add Goal", filters:"Filters",
     planEmpty:"Add tasks first, then hit Plan",
-    tabs:["Tasks","Done","Calendar","Habits","Goals","Plan","Stats"],
+    tabs:["Tasks","Done","Calendar","Habits","Goals","Plan","Stats","Mind"],
     days:["Mon","Tue","Wed","Thu","Fri","Sat","Sun"],
     months:["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"],
     HL:{week:"This Week",month:"This Month",year:"This Year","5year":"5 Years","10year":"10 Years"},
@@ -73,7 +73,7 @@ const LANG = {
     apiNote:"Nie nodig in Claude.ai nie. Vereis as standalone.",
     noGoals:"Geen doele nie", addGoal:"Voeg Doel By", filters:"Filters",
     planEmpty:"Voeg eers take by, druk dan Beplan",
-    tabs:["Lys","Gedaan","Rooster","Gewoontes","Doele","Plan","Statistieke"],
+    tabs:["Lys","Gedaan","Rooster","Gewoontes","Doele","Plan","Statistieke","Gemoed"],
     days:["Ma","Di","Wo","Do","Vr","Sa","So"],
     months:["Jan","Feb","Mrt","Apr","Mei","Jun","Jul","Aug","Sep","Okt","Nov","Des"],
     HL:{week:"Hierdie Week",month:"Hierdie Maand",year:"Hierdie Jaar","5year":"5 Jaar","10year":"10 Jaar"},
@@ -88,6 +88,98 @@ function todayStr()   { return toISODate(new Date()); }
 function xpForLevel(l){ return Math.floor(100*Math.pow(l,1.6)); }
 function levelFromXP(xp){ let l=1; while(xpForLevel(l+1)<=xp) l++; return l; }
 function xpGain(task)   { return task.priority==="high"?40:task.priority==="low"?10:20; }
+
+// ─── CRISIS RESOURCES ─────────────────────────────────────────────────────
+const CRISIS_RESOURCES = {
+  IE: { name:"Ireland", resources:[
+    {label:"Samaritans Ireland",contact:"116 123",note:"Free, 24/7"},
+    {label:"Pieta House",contact:"1800 247 247",note:"Free, 24/7"},
+    {label:"Text HELLO to 50808",contact:"",note:"Free text, 24/7"},
+    {label:"Emergency",contact:"112 / 999",note:""},
+  ]},
+  ZA: { name:"South Africa", resources:[
+    {label:"SADAG",contact:"0800 456 789",note:"Free, 24/7"},
+    {label:"Lifeline SA",contact:"0800 150 150",note:"Free, 24/7"},
+    {label:"Suicide Crisis Line",contact:"0800 567 567",note:"Free, 24/7"},
+    {label:"SMS Lifeline",contact:"31393",note:"SMS"},
+    {label:"Emergency",contact:"10111 / 10177",note:"Police / Ambulance"},
+  ]},
+  GB: { name:"United Kingdom", resources:[
+    {label:"Samaritans UK",contact:"116 123",note:"Free, 24/7"},
+    {label:"Crisis text line",contact:"Text SHOUT to 85258",note:"Free, 24/7"},
+    {label:"Emergency",contact:"999",note:""},
+  ]},
+  US: { name:"United States", resources:[
+    {label:"988 Suicide & Crisis Lifeline",contact:"988",note:"Call or text, 24/7"},
+    {label:"Crisis Text Line",contact:"Text HOME to 741741",note:"Free, 24/7"},
+    {label:"Emergency",contact:"911",note:""},
+  ]},
+  AU: { name:"Australia", resources:[
+    {label:"Lifeline Australia",contact:"13 11 14",note:"24/7"},
+    {label:"Beyond Blue",contact:"1300 22 4636",note:"24/7"},
+    {label:"Emergency",contact:"000",note:""},
+  ]},
+  NZ: { name:"New Zealand", resources:[
+    {label:"Lifeline NZ",contact:"0800 543 354",note:"24/7"},
+    {label:"Crisis Text",contact:"Text 4357",note:"24/7"},
+    {label:"Emergency",contact:"111",note:""},
+  ]},
+  CA: { name:"Canada", resources:[
+    {label:"Talk Suicide Canada",contact:"1-833-456-4566",note:"24/7"},
+    {label:"Crisis Text Line",contact:"Text HOME to 686868",note:"Free, 24/7"},
+    {label:"Emergency",contact:"911",note:""},
+  ]},
+  DEFAULT: { name:"International", resources:[
+    {label:"International Association for Suicide Prevention",contact:"https://www.iasp.info/resources/Crisis_Centres/",note:"Find your local crisis centre"},
+    {label:"Befrienders Worldwide",contact:"https://www.befrienders.org",note:"Global directory"},
+    {label:"Emergency",contact:"Your local emergency number",note:""},
+  ]},
+};
+function getCrisisResources(countryCode) {
+  const code=(countryCode||"").toUpperCase();
+  return CRISIS_RESOURCES[code]||CRISIS_RESOURCES.DEFAULT;
+}
+async function reverseGeocodeCountry(lat,lng) {
+  try {
+    const r=await fetch("https://api.bigdatacloud.net/data/reverse-geocode-client?latitude="+lat+"&longitude="+lng+"&localityLanguage=en",{signal:AbortSignal.timeout(5000)});
+    const d=await r.json(); return d.countryCode||null;
+  } catch(e) { return null; }
+}
+const THERAPY_INACTIVITY_MS=60*60*1000;
+const SUPPORTIVE_ONLY_RESET_MS=24*60*60*1000;
+const TTS_VOICES=[
+  {id:"alloy",label:"Alloy (neutral)"},{id:"echo",label:"Echo (male)"},
+  {id:"fable",label:"Fable (warm)"},{id:"onyx",label:"Onyx (deep)"},
+  {id:"nova",label:"Nova (female)"},{id:"shimmer",label:"Shimmer (soft)"},
+];
+function stripMarkdownForSpeech(text) {
+  return text.replace(/#{1,6}\s/g,"").replace(/\*\*(.*?)\*\*/g,"$1").replace(/\*(.*?)\*/g,"$1")
+    .replace(/`(.*?)`/g,"$1").replace(/\[(.*?)\]\(.*?\)/g,"$1")
+    .replace(/^\s*[-*]\s/gm,"").replace(/\n{2,}/g,". ").replace(/\n/g," ").trim();
+}
+async function fetchTTSAudio(text,voice,apiKey) {
+  const cleaned=stripMarkdownForSpeech(text);
+  if(!cleaned||!apiKey) return null;
+  const r=await fetch("https://api.openai.com/v1/audio/speech",{
+    method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+apiKey},
+    body:JSON.stringify({model:"tts-1",input:cleaned.slice(0,4096),voice:voice||"nova"}),
+    signal:AbortSignal.timeout(15000),
+  });
+  if(!r.ok) throw new Error("TTS API error: "+r.status);
+  return URL.createObjectURL(await r.blob());
+}
+async function transcribeWithWhisper(audioBlob,apiKey,language) {
+  const form=new FormData();
+  form.append("file",audioBlob,"audio.webm");
+  form.append("model","whisper-1");
+  if(language) form.append("language",language==="af"?"af":"en");
+  const r=await fetch("https://api.openai.com/v1/audio/transcriptions",{
+    method:"POST",headers:{"Authorization":"Bearer "+apiKey},
+    body:form,signal:AbortSignal.timeout(20000),
+  });
+  if(!r.ok) throw new Error("Whisper error: "+r.status);
+  const d=await r.json(); return d.text||"";
+}
 function timeAgo(ts) {
   const s=(Date.now()-new Date(ts).getTime())/1000;
   if(s<60)   return "just now";
@@ -160,6 +252,18 @@ const db = {
   }
 };
 
+
+
+async function loadSessionArchive() {
+  try {
+    const r = await db.get("fl:therapy:sessions");
+    return r && r.value ? JSON.parse(r.value) : [];
+  } catch (e) { return []; }
+}
+function saveSessionArchive(sessions) {
+  db.set("fl:therapy:sessions", JSON.stringify(sessions.slice(0, 50)));
+}
+
 // ─── AI ───────────────────────────────────────────────────────
 async function aiCall(system, userMsg, history) {
   const msgs = userMsg ? [...(history||[]), {role:"user",content:userMsg}] : (history||[]);
@@ -172,6 +276,78 @@ async function aiCall(system, userMsg, history) {
   if(d.error) throw new Error(d.error.message||"API error");
   return d.content.map(b=>b.text||"").join("");
 }
+
+
+// ─── THERAPY CONTEXT BUILDER ──────────────────────────────────────────────────
+function buildTherapyContext({tasks,habits,goals,stats,events}) {
+  const td=toISODate(new Date());
+  const pending=tasks.filter(function(t){ return !t.completed; });
+  const done2=tasks.filter(function(t){ return t.completed; });
+  const overdue=pending.filter(function(t){ return t.dueDate&&t.dueDate<td; });
+  const highPri=pending.filter(function(t){ return t.priority==="high"; });
+  const last14=Array.from({length:14},function(_,i){ const d=new Date(); d.setDate(d.getDate()-i); return toISODate(d); });
+  const habitSummaries=(habits||[]).map(function(h){
+    const comp=last14.filter(function(d){ return h.completions&&h.completions[d]; }).length;
+    return {name:h.title,completedLast14:comp,streak:calcStreak(h)};
+  });
+  const avgHabitRate=habits&&habits.length
+    ?Math.round(habitSummaries.reduce(function(s,h){ return s+h.completedLast14; },0)/habits.length/14*100):null;
+  const goalSummaries=(goals||[]).slice(0,8).map(function(g){
+    const dm=g.milestones.filter(function(m){ return m.done; }).length;
+    const tot=g.milestones.length;
+    return {title:g.title,horizon:g.horizon,progress:tot?dm+"/"+tot+" milestones":"no milestones set"};
+  });
+  const wk7=Array.from({length:7},function(_,i){ const d=new Date(); d.setDate(d.getDate()-i); return toISODate(d); });
+  const tasksThisWeek=wk7.reduce(function(s,d){ return s+(stats.history&&stats.history[d]||0); },0);
+  const next7=Array.from({length:7},function(_,i){ const d=new Date(); d.setDate(d.getDate()+i); return toISODate(d); });
+  const upcomingEvents=(events||[]).filter(function(e){ return e.start&&next7.some(function(d){ return e.start.slice(0,10)===d; }); }).map(function(e){ return e.start.slice(0,10)+" "+e.start.slice(11,16)+": "+e.title; }).slice(0,15);
+  const todayLoad=upcomingEvents.filter(function(e){ return e.startsWith(td); }).length;
+
+  return "APP DATA SNAPSHOT ("+td+"):\n\nTASKS:\n- Pending: "+pending.length+" ("+highPri.length+" high priority, "+overdue.length+" overdue)\n- Completed this week: "+tasksThisWeek+"\n- Recent completions: "+done2.slice(0,5).map(function(t){ return t.enrichedTitle||t.title; }).join("; ")+"\n- Sample pending: "+pending.slice(0,5).map(function(t){ return '"'+(t.enrichedTitle||t.title)+'" ('+t.priority+")"; }).join("; ")+"\n\nHABITS ("+habits.length+" tracked):\n"+(habitSummaries.length?habitSummaries.map(function(h){ return "- "+h.name+": "+h.completedLast14+"/14 days (streak: "+h.streak+")"; }).join("\n"):"- No habits tracked")+"\n- Average completion last 14 days: "+(avgHabitRate!==null?avgHabitRate+"%":"n/a")+"\n\nGOALS ("+goals.length+" total):\n"+(goalSummaries.length?goalSummaries.map(function(g){ return "- ["+g.horizon+"] "+g.title+": "+g.progress; }).join("\n"):"- No goals set")+"\n\nCALENDAR (next 7 days):\n"+(upcomingEvents.length?upcomingEvents.join("\n"):"No upcoming events")+"\nToday\'s event load: "+todayLoad+"\n\nWELLBEING STATS:\n- XP level: "+levelFromXP(stats.xp)+"\n- Day streak: "+stats.streakDays+"\n- Total tasks completed: "+done2.length;
+}
+
+
+
+function buildFullClinicalPicture(sessions, therapyData) {
+  if (!sessions || sessions.length === 0) return "";
+  const lines = [];
+  const sessionCount = sessions.length;
+  const firstDate = sessions[sessions.length - 1]?.date;
+  const lastDate  = sessions[0]?.date;
+  lines.push("CLINICAL HISTORY (" + sessionCount + " sessions, " + firstDate + " – " + lastDate + "):");
+  const triageHistory = sessions.slice(0, 10)
+    .map(function(s) { return s.date + ": " + (s.triage || "unknown"); }).join(", ");
+  lines.push("Triage trajectory: " + triageHistory);
+  const phqScores = sessions.filter(function(s) { return s.phq9 != null; }).slice(0, 8)
+    .map(function(s) { return s.date + "=" + s.phq9; });
+  if (phqScores.length > 1) {
+    lines.push("PHQ-9 trend: " + phqScores.join(", "));
+    const first = sessions.filter(function(s) { return s.phq9 != null; }).slice(-1)[0]?.phq9;
+    const last  = sessions.filter(function(s) { return s.phq9 != null; })[0]?.phq9;
+    const delta = last - first;
+    lines.push("PHQ-9 change from baseline: " + (delta > 0 ? "+" : "") + delta);
+  }
+  const gadScores = sessions.filter(function(s) { return s.gad7 != null; }).slice(0, 8)
+    .map(function(s) { return s.date + "=" + s.gad7; });
+  if (gadScores.length > 1) lines.push("GAD-7 trend: " + gadScores.join(", "));
+  const wbScores = sessions.filter(function(s) { return s.wellbeing != null; }).slice(0, 8)
+    .map(function(s) { return s.wellbeing; });
+  if (wbScores.length > 1) {
+    const avg = Math.round(wbScores.reduce(function(a,b){ return a+b; },0) / wbScores.length * 10) / 10;
+    lines.push("Wellbeing average (0–10): " + avg + " across " + wbScores.length + " sessions");
+  }
+  const summaries = sessions.slice(0, 5).filter(function(s) { return s.summary; })
+    .map(function(s) { return s.date + ": " + s.summary; });
+  if (summaries.length > 0) { lines.push("\nRECENT SESSION SUMMARIES:"); summaries.forEach(function(s) { lines.push("• " + s); }); }
+  const interruptions = sessions.filter(function(s) { return s.reason === "inactivity_timeout"; }).length;
+  if (interruptions > 1) lines.push("\nNOTE: " + interruptions + " sessions ended due to inactivity.");
+  const daysSinceLast = therapyData.last_full_assessment
+    ? Math.floor((Date.now() - new Date(therapyData.last_full_assessment).getTime()) / 86400000)
+    : null;
+  if (daysSinceLast !== null) lines.push("Days since last full assessment: " + daysSinceLast + (daysSinceLast >= 14 ? " (REASSESSMENT DUE)" : ""));
+  return lines.join("\n");
+}
+
 async function aiJSON(sys,msg) { return JSON.parse((await aiCall(sys,msg)).replace(/```json|```/g,"").trim()); }
 
 // ─── ICS ──────────────────────────────────────────────────────
@@ -206,6 +382,77 @@ Order by urgency+priority. Include ALL tasks.`;
 
 const P_FOLLOWUP  = `Completed task + outcome note. Suggest 2-3 follow-up tasks. Raw JSON: {"suggestions":["t1","t2","t3"]}`;
 const P_MILESTONE = `Goal + horizon. Suggest 4-6 milestones. Raw JSON: {"milestones":["m1","m2","m3","m4"]}`;
+
+
+// ─── AI THERAPIST SYSTEM PROMPT ──────────────────────────────────────────────
+const P_THERAPIST_SYSTEM = `You are a supportive AI wellbeing companion embedded in a productivity app called Planloos. You are warm, direct, and non-judgmental. You use evidence-based approaches including CBT, ACT, and Motivational Interviewing. You are not a registered therapist — be transparent about this if it becomes relevant.
+
+You receive a full snapshot of the user's app data at the start of each session. Use it therapeutically: notice patterns, make connections, ask about what you observe. Weave it into the conversation naturally — do not read data back as a list.
+
+LANGUAGE:
+- If the session language is Afrikaans, respond entirely in Afrikaans.
+- If the user writes in a mix of Afrikaans and English, respond in that same mixed register.
+- Detect language from the user's actual messages. Switch with them if they switch.
+
+CONVERSATION RULES:
+- One question per message. Never stack.
+- Reflect before you advance. Show you heard them before moving forward.
+- Never validate everything uncritically. Gently challenge distorted thinking.
+- Match emotional register: if distressed, hold space. If reflective, go deeper.
+- Be direct. Say the useful thing.
+
+TRIAGE (administer silently across first 2–3 turns, repeat every 14 days):
+- PHQ-2 first: (1) "Over the past two weeks, how often have you felt down, depressed, or hopeless?" (2) "How often have you had little interest or pleasure in doing things?" Score 0–3 each. Total ≥3 = proceed to full PHQ-9.
+- GAD-2 first: (1) "How often have you felt nervous, anxious, or on edge?" (2) "How often have you found it hard to stop or control worrying?" Score 0–3 each. Total ≥3 = proceed to full GAD-7.
+- PHQ-9: 9 items, scored 0–3. 0–4 none, 5–9 mild, 10–14 moderate, 15–27 severe.
+- GAD-7: 7 items, scored 0–3. 0–4 none, 5–9 mild, 10–14 moderate, 15–21 severe.
+- Present items verbatim, embedded in natural conversation. Never mention instrument names.
+
+TREATMENT BY TRIAGE LEVEL:
+- LOW (PHQ-9 <5, GAD-7 <5): Growth, self-awareness, values clarification, MI-based lifestyle goals, ACT values work, SFBT scaling questions.
+- MODERATE (5–14): Active CBT — thought records, behavioural activation, cognitive restructuring, worry postponement. One skill per session. Reference app data where relevant.
+- HIGH (≥15 on either): Supportive holding only. Do not attempt deep therapeutic work. Warmly recommend professional support. The app will display localised crisis resources.
+- SUPPORTIVE_ONLY (system override): Warm, supportive responses only. No therapeutic techniques. Encourage human support. Do not break this mode.
+- UNKNOWN (first session / pre-assessment): Open warmly, begin PHQ-2/GAD-2.
+
+SESSION STRUCTURE (5–8 exchanges):
+Phase 1 (checkin): Warm check-in. Reference app data observations naturally.
+Phase 2 (assessment): PHQ-2/GAD-2, expanding to full scales if indicated.
+Phase 3 (work): Technique matched to triage. One focused thread.
+Phase 4 (close): One concrete takeaway. Ask for subjective wellbeing score 0–10.
+
+APP DATA CLINICAL SIGNALS:
+- Habit completion dropping = possible low mood or avoidance
+- Increasing overdue tasks + declining completions = possible executive function difficulty
+- Goals abandoned = possible anhedonia or loss of direction
+- Streak loss after sustained streak = worth exploring gently
+- Very high task load, low completion = possible perfectionism or overwhelm
+- Calendar packed with back-to-back events = burnout risk worth noting
+
+CRISIS PROTOCOL — MANDATORY, RUNS EVERY TURN:
+Scan every message for: suicidal ideation, self-harm intent, hopelessness + finality, giving things away, goodbyes that feel final.
+If ANY appear:
+1. Acknowledge warmly, without panic.
+2. Ask directly: "Are you having thoughts of ending your life or harming yourself?" (in the user's language).
+3. Set crisis_flag: true. The app displays localised resources automatically.
+4. Do not continue therapeutic content in the same message.
+
+ONGOING RE-ASSESSMENT: Every 14 days, re-administer PHQ-9 and GAD-7. If score worsens ≥5 points, step up triage.
+
+OUTPUT — raw JSON only, no markdown fences:
+{
+  "message": "your response",
+  "crisis_flag": false,
+  "session_phase": "checkin|assessment|work|close",
+  "triage": "low|moderate|high|supportive_only|unknown",
+  "phq9_score": null,
+  "gad7_score": null,
+  "wellbeing_score": null,
+  "next_session_days": 7
+}`;
+
+const P_SESSION_SUMMARY = `Given the following therapy session transcript, write a single concise sentence (12–18 words) summarising what the person was dealing with and any progress or insight. Be clinically precise but human. No labels, no diagnosis. Example: "Explored work overwhelm and procrastination avoidance; committed to one 15-minute task start tomorrow." Output only the summary sentence, no other text.`;
+
 const P_THERAPIST = `You are a perceptive end-of-day reflection coach — warm but probing.
 Rules: ONE question per message. Reference specific tasks. Progression: broad opening → wins → avoided tasks WHY → emotions → life goals alignment. Be direct. Not sycophantic.
 After exactly 5 user messages write "REFLECTION:" then 3 paragraphs: patterns, what's working, 3 action items for tomorrow.`;
@@ -659,6 +906,603 @@ function SettingsModal({cfg, onSave, onClose, T, lang}) {
 }
 
 // ─── MAIN APP ─────────────────────────────────────────────────
+
+function TherapyTab({ therapyData, onStartSession, onSetCountry, onResetSupportive, userCountry, T, lang }) {
+  const wbLog  = therapyData.wellbeing_log || [];
+  const triage = therapyData.triage || "unknown";
+  const isAf   = lang === "af";
+  const crisis = getCrisisResources(userCountry);
+
+  const triageColor = {
+    low: "#34d399", moderate: "#fbbf24",
+    high: "#f87171", supportive_only: "#f87171", unknown: "rgba(128,128,128,.5)"
+  };
+  const triageLabel = isAf
+    ? { low: "Laag — doen goed", moderate: "Matig — ondersteuning nuttig",
+        high: "Hoog — professionele hulp aanbeveel",
+        supportive_only: "Ondersteuningsmodus aktief", unknown: "Nog nie geassesseer nie" }
+    : { low: "Low — doing well", moderate: "Moderate — some support helpful",
+        high: "High — professional support recommended",
+        supportive_only: "Supportive mode active", unknown: "Not yet assessed" };
+
+  // Re-assessment due indicator
+  const reassessmentDue = (function() {
+    if (!therapyData.last_full_assessment) return true;
+    const days = (Date.now() - new Date(therapyData.last_full_assessment).getTime()) / 86400000;
+    return days >= 14;
+  })();
+
+  // supportive_only expiry
+  const supportiveExpiry = (function() {
+    if (triage !== "supportive_only" || !therapyData.supportiveOnlySince) return null;
+    const remaining = SUPPORTIVE_ONLY_RESET_MS - (Date.now() - new Date(therapyData.supportiveOnlySince).getTime());
+    return remaining > 0 ? Math.ceil(remaining / 3600000) : null;
+  })();
+
+  // Sparkline + trend
+  const sparkData = wbLog.slice(-14);
+  const trendLine = (function() {
+    if (sparkData.length < 3) return null;
+    const n = sparkData.length;
+    const ys = sparkData.map(function(d) { return d.score; });
+    const sumX  = (n * (n - 1)) / 2;
+    const sumY  = ys.reduce(function(a, b) { return a + b; }, 0);
+    const sumXY = ys.reduce(function(s, y, i) { return s + i * y; }, 0);
+    const sumX2 = (n * (n - 1) * (2 * n - 1)) / 6;
+    const denom = n * sumX2 - sumX * sumX;
+    if (!denom) return null;
+    const slope     = (n * sumXY - sumX * sumY) / denom;
+    const intercept = (sumY - slope * sumX) / n;
+    return { yStart: intercept, yEnd: intercept + slope * (n - 1), slope };
+  })();
+  const trendColor = trendLine
+    ? (trendLine.slope > 0.1 ? "#34d399" : trendLine.slope < -0.1 ? "#f87171" : "#fbbf24")
+    : T.ac;
+
+  const showCrisis  = triage === "high" || triage === "supportive_only";
+  const disclaimer  = isAf
+    ? "Hierdie AI-metgesel bied ondersteuning en bewysgebaseerde hulpmiddels — dit is nie 'n plaasvervanger vir professionele geestesgesondheidsorg nie."
+    : "This AI companion provides support and evidence-based tools — it is not a substitute for professional mental health care.";
+
+  const countries = [
+    ["IE","🇮🇪 Ireland"],["ZA","🇿🇦 South Africa"],["GB","🇬🇧 UK"],
+    ["US","🇺🇸 USA"],["AU","🇦🇺 Australia"],["NZ","🇳🇿 New Zealand"],
+    ["CA","🇨🇦 Canada"],["DEFAULT","🌍 Other"]
+  ];
+
+  return (
+    <div style={{ animation: "fadeIn .2s ease" }}>
+
+      {/* Country prompt */}
+      {!therapyData.countryPromptDone && (
+        <div style={{ background: T.ac + "12", border: "1px solid " + T.ac + "40", borderRadius: 16, padding: 16, marginBottom: 12 }}>
+          <p style={{ margin: "0 0 6px", fontSize: 13, fontWeight: 700, color: T.tc }}>
+            {isAf ? "Waar is jy gebaseer?" : "Where are you based?"}
+          </p>
+          <p style={{ margin: "0 0 12px", fontSize: 11, color: T.tc3 }}>
+            {isAf
+              ? "Dit word gebruik om die regte krisisbronne te wys as jy dit nodig het."
+              : "This ensures you see the right crisis resources if you ever need them."}
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5, marginBottom: 10 }}>
+            {countries.map(function(pair) {
+              const k = pair[0], l = pair[1];
+              const active = (userCountry || "IE") === k;
+              return (
+                <button key={k} onClick={function() { onSetCountry(k, false); }}
+                  style={{ padding: "7px 10px", borderRadius: 10,
+                    border: "1px solid " + (active ? T.ac + "80" : "rgba(128,128,128,.2)"),
+                    background: active ? T.ac + "20" : "transparent",
+                    color: active ? T.ac : T.tc2, fontWeight: 600,
+                    fontSize: 11, cursor: "pointer", textAlign: "left" }}>
+                  {l}
+                </button>
+              );
+            })}
+          </div>
+          <button onClick={function() { onSetCountry(userCountry || "IE", true); }}
+            style={{ width: "100%", padding: "8px 0", borderRadius: 10, background: T.ac,
+              border: "none", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+            {isAf ? "Bevestig" : "Confirm"}
+          </button>
+        </div>
+      )}
+
+      {/* Main status card */}
+      <div style={{ background: T.card, borderRadius: 16, padding: 18, border: "1px solid " + T.border, marginBottom: 12 }}>
+
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: T.tc3, textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>
+              {isAf ? "Welstand Status" : "Wellbeing Status"}
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <div style={{ width: 10, height: 10, borderRadius: "50%", background: triageColor[triage], flexShrink: 0 }} />
+              <span style={{ fontSize: 13, fontWeight: 600, color: T.tc }}>{triageLabel[triage]}</span>
+              {reassessmentDue && triage !== "unknown" && (
+                <span style={{ fontSize: 9, color: "#fbbf24", background: "rgba(251,191,36,.12)",
+                  border: "1px solid rgba(251,191,36,.3)", borderRadius: 20, padding: "1px 7px", fontWeight: 700 }}>
+                  {isAf ? "hersien versk." : "reassess due"}
+                </span>
+              )}
+            </div>
+            {userCountry && (
+              <div style={{ fontSize: 10, color: T.tc3, marginTop: 3 }}>
+                {isAf ? "Krisisbronne vir" : "Crisis resources for"}: {crisis.name}
+              </div>
+            )}
+          </div>
+          {therapyData.phq9_latest && (
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: 10, color: T.tc3, marginBottom: 2 }}>PHQ-9</div>
+              <div style={{ fontSize: 20, fontWeight: 900, color: triageColor[triage] }}>{therapyData.phq9_latest.score}</div>
+              <div style={{ fontSize: 10, color: T.tc3 }}>{therapyData.phq9_latest.date}</div>
+            </div>
+          )}
+        </div>
+
+        {/* supportive_only reset pill */}
+        {triage === "supportive_only" && (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+            background: "rgba(248,113,113,.08)", border: "1px solid rgba(248,113,113,.2)",
+            borderRadius: 10, padding: "8px 12px", marginBottom: 12 }}>
+            <span style={{ fontSize: 11, color: "#f87171" }}>
+              {supportiveExpiry
+                ? (isAf ? "Volledige sessies hervat oor " + supportiveExpiry + " uur" : "Full sessions resume in " + supportiveExpiry + "h")
+                : (isAf ? "Gereed om te herstel" : "Ready to restore")}
+            </span>
+            <button onClick={onResetSupportive}
+              style={{ fontSize: 10, padding: "3px 10px", borderRadius: 20,
+                border: "1px solid rgba(248,113,113,.4)", background: "transparent",
+                color: "#f87171", cursor: "pointer", fontWeight: 700 }}>
+              {isAf ? "Nou hervat" : "Resume now"}
+            </button>
+          </div>
+        )}
+
+        {/* Sparkline */}
+        {sparkData.length > 1 && (
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: T.tc3, marginBottom: 4 }}>
+              <span>{isAf ? "Welstand (0–10)" : "Wellbeing (0–10)"}</span>
+              {trendLine && (
+                <span style={{ color: trendColor, fontWeight: 700 }}>
+                  {trendLine.slope > 0.1
+                    ? "↗ " + (isAf ? "verbeter" : "improving")
+                    : trendLine.slope < -0.1
+                    ? "↘ " + (isAf ? "afneem" : "declining")
+                    : "→ " + (isAf ? "stabiel" : "stable")}
+                </span>
+              )}
+            </div>
+            <div style={{ position: "relative", height: 48 }}>
+              <div style={{ position: "absolute", left: 0, top: 0,    fontSize: 9, color: T.tc3, lineHeight: 1 }}>10</div>
+              <div style={{ position: "absolute", left: 0, bottom: 0, fontSize: 9, color: T.tc3, lineHeight: 1 }}>0</div>
+              <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: "100%", paddingLeft: 14 }}>
+                {sparkData.map(function(entry, i) {
+                  const h = Math.max((entry.score / 10) * 44, 2);
+                  const isLast = i === sparkData.length - 1;
+                  return (
+                    <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column",
+                      alignItems: "center", justifyContent: "flex-end", height: "100%" }}>
+                      <div title={entry.date + ": " + entry.score + "/10"}
+                        style={{ width: "100%", height: h, borderRadius: 3,
+                          background: isLast ? T.ac : T.ac + "55", transition: "height .3s" }} />
+                    </div>
+                  );
+                })}
+              </div>
+              {trendLine && sparkData.length >= 3 && (
+                <svg style={{ position: "absolute", top: 0, left: 14, width: "calc(100% - 14px)",
+                  height: "100%", pointerEvents: "none" }}
+                  preserveAspectRatio="none" viewBox={"0 0 " + (sparkData.length * 20) + " 48"}>
+                  <line
+                    x1="0" y1={48 - (Math.min(Math.max(trendLine.yStart, 0), 10) / 10) * 44}
+                    x2={sparkData.length * 20} y2={48 - (Math.min(Math.max(trendLine.yEnd, 0), 10) / 10) * 44}
+                    stroke={trendColor} strokeWidth="1.5" strokeDasharray="4 3" opacity="0.7" />
+                </svg>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Crisis resources */}
+        {showCrisis && (
+          <div style={{ background: "rgba(248,113,113,.08)", border: "1px solid rgba(248,113,113,.25)",
+            borderRadius: 10, padding: "10px 14px", marginBottom: 12 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#f87171", marginBottom: 6 }}>
+              {isAf ? "Ondersteuning beskikbaar nou" : "Support available now"} · {crisis.name}
+            </div>
+            {crisis.resources.map(function(r) {
+              return (
+                <div key={r.label} style={{ display: "flex", justifyContent: "space-between",
+                  fontSize: 11, color: "rgba(248,113,113,.8)", marginBottom: 3 }}>
+                  <span>{r.label}</span>
+                  <span style={{ fontWeight: 700 }}>
+                    {r.contact}{r.note && <span style={{ fontWeight: 400, opacity: .7 }}> {r.note}</span>}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <button onClick={onStartSession}
+          style={{ width: "100%", padding: "11px 0", borderRadius: 12, background: T.ac,
+            border: "none", color: "#fff", fontWeight: 900, fontSize: 14, cursor: "pointer", letterSpacing: .5 }}>
+          {(therapyData.sessions || []).length > 0
+            ? (isAf ? "🌿 Nuwe Sessie" : "🌿 New Session")
+            : (isAf ? "🌿 Begin Eerste Sessie" : "🌿 Start First Session")}
+        </button>
+      </div>
+
+      {/* Past sessions with summary */}
+      {(therapyData.sessions || []).length > 0 && (
+        <div style={{ background: T.card, borderRadius: 14, padding: 14, border: "1px solid " + T.border, marginBottom: 12 }}>
+          <p style={{ margin: "0 0 10px", fontSize: 10, fontWeight: 700, color: T.tc3,
+            textTransform: "uppercase", letterSpacing: 1 }}>
+            {isAf ? "Vorige Sessies" : "Past Sessions"}
+          </p>
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            {therapyData.sessions.slice(0, 10).map(function(s, i) {
+              const isTimeout = s.reason === "inactivity_timeout";
+              return (
+                <div key={i} style={{ padding: "10px 0",
+                  borderBottom: i < Math.min(therapyData.sessions.length, 10) - 1 ? "1px solid " + T.border : "none" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: s.summary ? 5 : 0 }}>
+                    <div style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
+                      background: triageColor[s.triage] || triageColor.unknown }} />
+                    <span style={{ fontSize: 12, color: T.tc2, flex: 1 }}>{s.date}</span>
+                    {isTimeout && (
+                      <span style={{ fontSize: 9, color: T.tc3, background: T.surf,
+                        borderRadius: 20, padding: "1px 6px" }}>
+                        {isAf ? "onderbreek" : "interrupted"}
+                      </span>
+                    )}
+                    {s.wellbeing != null && (
+                      <span style={{ fontSize: 11, color: T.ac, fontWeight: 700 }}>{s.wellbeing}/10</span>
+                    )}
+                    {s.phq9 != null && (
+                      <span style={{ fontSize: 10, color: T.tc3 }}>PHQ-9: {s.phq9}</span>
+                    )}
+                  </div>
+                  {s.summary && (
+                    <p style={{ margin: "0 0 0 16px", fontSize: 11, color: T.tc3,
+                      lineHeight: 1.5, fontStyle: "italic" }}>
+                      {s.summary}
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <p style={{ fontSize: 10, color: T.tc3, textAlign: "center", lineHeight: 1.5, padding: "0 10px" }}>
+        {disclaimer}
+      </p>
+    </div>
+  );
+}
+
+function TherapyModal({
+  therapyData, input, setInput, onSend, onClose, loading, done,
+  parseResponse, userCountry, contextReady, lang, T,
+  // Voice props (all NEW):
+  voiceMode, setVoiceMode,
+  micActive, micTranscript,
+  ttsPlaying, ttsPaused, voiceThinking,
+  sttError, setSttError,
+  onStartMic, onStopMic, onCancelMic,
+  onToggleTTSPause, onStopTTS,
+  audioRef,
+}) {
+  const scrollRef = useRef();
+  useEffect(function() {
+    if (scrollRef.current) scrollRef.current.scrollTo({ top: 99999, behavior: "smooth" });
+  }, [therapyData.history, voiceThinking]);
+
+  const isAf   = lang === "af";
+  const crisis = getCrisisResources(userCountry);
+  const isSupportiveOnly = therapyData.triage === "supportive_only";
+
+  const visibleMessages = (therapyData.history || []).filter(function(m) {
+    return m.content && m.content.trim();
+  });
+
+  // Mic pulse animation style
+  const micPulseStyle = micActive
+    ? { animation: "pulse 1s infinite", background: "#f87171" }
+    : { background: T.ac };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.92)",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      zIndex: 400, padding: 20, backdropFilter: "blur(12px)" }}>
+
+      {/* Hidden audio element for TTS playback */}
+      <audio ref={audioRef}
+        onEnded={function() { setTtsPlaying && setTtsPlaying(false); }}
+        style={{ display: "none" }} />
+
+      <div style={{ background: "#111", borderRadius: 24, width: "100%", maxWidth: 520,
+        maxHeight: "92vh", display: "flex", flexDirection: "column",
+        border: "2px solid " + T.ac, boxShadow: "0 20px 60px rgba(0,0,0,.8)" }}>
+
+        {/* Header */}
+        <div style={{ padding: "16px 20px 12px", borderBottom: "1px solid rgba(255,255,255,.08)",
+          display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: 17, fontWeight: 900, color: T.ac }}>
+              🌿 {isAf ? "Welstand Sessie" : "Wellbeing Session"}
+            </h2>
+            <p style={{ margin: "2px 0 0", fontSize: 10, color: "rgba(255,255,255,.3)" }}>
+              {isAf ? "Vertroulik · AI metgesel · Nie 'n terapeut nie" : "Confidential · AI companion · Not a therapist"}
+            </p>
+            {!contextReady && (
+              <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 4 }}>
+                <div style={{ width: 5, height: 5, borderRadius: "50%", background: T.ac,
+                  animation: "pulse 1.5s infinite" }} />
+                <span style={{ fontSize: 9, color: T.tc3 }}>
+                  {isAf ? "Geskiedenis laai…" : "Loading history…"}
+                </span>
+              </div>
+            )}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {isSupportiveOnly && (
+              <span style={{ fontSize: 9, color: "#f87171", background: "rgba(248,113,113,.1)",
+                border: "1px solid rgba(248,113,113,.3)", borderRadius: 20, padding: "2px 7px" }}>
+                {isAf ? "Ondersteuningsmodus" : "Supportive mode"}
+              </span>
+            )}
+            {/* Voice / Text toggle */}
+            <button onClick={function() {
+                onStopTTS();
+                setVoiceMode(function(v) { return !v; });
+              }}
+              title={voiceMode ? (isAf ? "Wissel na teks" : "Switch to text") : (isAf ? "Wissel na stem" : "Switch to voice")}
+              style={{ width: 30, height: 30, borderRadius: 8, border: "1px solid " + (voiceMode ? T.ac : "rgba(128,128,128,.3)"),
+                background: voiceMode ? T.ac + "25" : "transparent", color: voiceMode ? T.ac : T.tc3,
+                cursor: "pointer", fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              {voiceMode ? "🎙" : "⌨"}
+            </button>
+            <button onClick={function() { onStopTTS(); onClose(); }}
+              style={{ background: "transparent", border: "none", color: "rgba(255,255,255,.3)",
+                cursor: "pointer", fontSize: 18, lineHeight: 1 }}>✕</button>
+          </div>
+        </div>
+
+        {/* Message transcript */}
+        <div ref={scrollRef} style={{ flex: 1, overflowY: "auto", padding: "18px 20px",
+          display: "flex", flexDirection: "column", gap: 12 }}>
+
+          {loading && visibleMessages.length === 0 && (
+            <div style={{ textAlign: "center", padding: 40 }}>
+              <div style={{ fontSize: 28, display: "inline-block",
+                animation: "spin 1.5s linear infinite", marginBottom: 10 }}>🌿</div>
+              <p style={{ color: "rgba(255,255,255,.4)", margin: 0, fontSize: 13 }}>
+                {isAf ? "Sessie begin…" : "Starting session…"}
+              </p>
+            </div>
+          )}
+
+          {visibleMessages.map(function(m, i) {
+            const isUser  = m.role === "user";
+            const parsed  = isUser ? null : parseResponse(m.content);
+            const text    = isUser ? m.content : (parsed?.message || m.content);
+            const isCrisis = !isUser && parsed?.crisis_flag;
+            const isLatestAssistant = !isUser && i === visibleMessages.length - 1;
+
+            return (
+              <div key={i}>
+                {isCrisis && (
+                  <div style={{ background: "rgba(248,113,113,.1)", border: "1px solid rgba(248,113,113,.35)",
+                    borderRadius: 12, padding: "12px 16px", marginBottom: 8 }}>
+                    <p style={{ margin: "0 0 8px", fontSize: 12, fontWeight: 700, color: "#f87171" }}>
+                      ⚠ {isAf ? "Ondersteuning beskikbaar" : "Support resources"} · {crisis.name}
+                    </p>
+                    {crisis.resources.map(function(r) {
+                      return (
+                        <div key={r.label} style={{ fontSize: 11, color: "rgba(248,113,113,.85)", marginBottom: 3 }}>
+                          <span style={{ fontWeight: 700 }}>{r.label}</span>
+                          {r.contact && <span> — {r.contact}</span>}
+                          {r.note && <span style={{ opacity: .65 }}> {r.note}</span>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                <div style={{ display: "flex", justifyContent: isUser ? "flex-end" : "flex-start",
+                  alignItems: "flex-end", gap: 6 }}>
+                  <div style={{ maxWidth: "88%",
+                    background: isUser ? T.ac + "28" : "rgba(255,255,255,.06)",
+                    borderRadius: isUser ? "18px 18px 4px 18px" : "18px 18px 18px 4px",
+                    padding: "11px 15px",
+                    border: "1px solid " + (isUser ? T.ac + "40" : "rgba(255,255,255,.08)") }}>
+                    <p style={{ margin: 0, fontSize: 14, lineHeight: 1.65,
+                      color: "rgba(255,255,255,.85)", whiteSpace: "pre-wrap" }}>{text}</p>
+                    {!isUser && parsed?.wellbeing_score != null && (
+                      <p style={{ margin: "5px 0 0", fontSize: 11, color: T.ac }}>
+                        {isAf ? "Welstand" : "Wellbeing"}: {parsed.wellbeing_score}/10
+                      </p>
+                    )}
+                  </div>
+
+                  {/* TTS replay button on latest assistant message */}
+                  {!isUser && isLatestAssistant && !voiceThinking && (
+                    <button onClick={function() { speakResponse(text); }}
+                      title={isAf ? "Speel weer" : "Replay"}
+                      style={{ width: 26, height: 26, borderRadius: "50%", flexShrink: 0,
+                        background: ttsPlaying ? T.ac + "30" : "rgba(255,255,255,.06)",
+                        border: "1px solid rgba(255,255,255,.12)", color: T.tc3,
+                        cursor: "pointer", fontSize: 11, display: "flex",
+                        alignItems: "center", justifyContent: "center" }}>
+                      🔊
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+
+          {/* Therapist thinking animation */}
+          {(voiceThinking || (loading && visibleMessages.length > 0)) && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ display: "flex", gap: 5 }}>
+                {[0,1,2].map(function(i) {
+                  return <div key={i} style={{ width: 8, height: 8, borderRadius: "50%",
+                    background: T.ac, animation: "bounce .8s " + (i * .15) + "s infinite ease-in-out" }} />;
+                })}
+              </div>
+              <span style={{ fontSize: 11, color: T.tc3 }}>
+                {isAf ? "Terapeut dink…" : "Therapist thinking…"}
+              </span>
+            </div>
+          )}
+
+          {/* Live mic transcript */}
+          {micActive && micTranscript && (
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <div style={{ maxWidth: "88%", background: T.ac + "15",
+                border: "1px dashed " + T.ac + "60", borderRadius: "18px 18px 4px 18px",
+                padding: "10px 14px" }}>
+                <p style={{ margin: 0, fontSize: 13, color: "rgba(255,255,255,.6)",
+                  fontStyle: "italic", lineHeight: 1.5 }}>{micTranscript}</p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* TTS playback bar — shown when audio is playing or paused */}
+        {(ttsPlaying || ttsPaused) && (
+          <div style={{ padding: "10px 20px", borderTop: "1px solid rgba(255,255,255,.06)",
+            display: "flex", alignItems: "center", gap: 10,
+            background: "rgba(255,255,255,.03)" }}>
+            <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ width: 8, height: 8, borderRadius: "50%",
+                background: ttsPlaying ? "#34d399" : "#fbbf24",
+                animation: ttsPlaying ? "pulse 1.5s infinite" : "none" }} />
+              <span style={{ fontSize: 11, color: T.tc3 }}>
+                {ttsPlaying
+                  ? (isAf ? "Terapeut praat…" : "Therapist speaking…")
+                  : (isAf ? "Gepouseer" : "Paused")}
+              </span>
+            </div>
+            <button onClick={onToggleTTSPause}
+              style={{ padding: "5px 14px", borderRadius: 20, border: "1px solid " + T.ac + "50",
+                background: T.ac + "15", color: T.ac, cursor: "pointer",
+                fontSize: 12, fontWeight: 700 }}>
+              {ttsPlaying ? (isAf ? "⏸ Pauseer" : "⏸ Pause") : (isAf ? "▶ Hervat" : "▶ Resume")}
+            </button>
+            <button onClick={onStopTTS}
+              style={{ padding: "5px 10px", borderRadius: 20, border: "none",
+                background: "transparent", color: T.tc3, cursor: "pointer", fontSize: 12 }}>
+              ✕
+            </button>
+          </div>
+        )}
+
+        {/* STT error */}
+        {sttError && (
+          <div style={{ padding: "6px 20px", background: "rgba(248,113,113,.08)" }}>
+            <span style={{ fontSize: 11, color: "#f87171" }}>{sttError}</span>
+            <button onClick={function() { setSttError(""); }}
+              style={{ background: "transparent", border: "none", color: "#f87171",
+                cursor: "pointer", marginLeft: 8, fontSize: 11 }}>✕</button>
+          </div>
+        )}
+
+        {/* Input area */}
+        {!done ? (
+          <div style={{ padding: "14px 20px", borderTop: "1px solid rgba(255,255,255,.08)" }}>
+            {voiceMode ? (
+              /* VOICE INPUT */
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
+                {/* Big mic button */}
+                <button
+                  onMouseDown={function() {}}
+                  onClick={micActive ? onStopMic : onStartMic}
+                  disabled={voiceThinking || loading}
+                  style={{ width: 72, height: 72, borderRadius: "50%",
+                    border: "3px solid " + (micActive ? "#f87171" : T.ac),
+                    cursor: voiceThinking ? "wait" : "pointer",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 28, transition: "all .2s",
+                    boxShadow: micActive ? "0 0 0 8px rgba(248,113,113,.2), 0 0 0 16px rgba(248,113,113,.1)" : "none",
+                    ...micPulseStyle }}>
+                  {micActive ? "⏹" : "🎙"}
+                </button>
+                <p style={{ margin: 0, fontSize: 11, color: T.tc3, textAlign: "center" }}>
+                  {micActive
+                    ? (isAf ? "Tik om op te hou" : "Tap to stop")
+                    : voiceThinking
+                    ? (isAf ? "Verwerk…" : "Processing…")
+                    : (isAf ? "Tik om te praat" : "Tap to speak")}
+                </p>
+                {micActive && (
+                  <button onClick={onCancelMic}
+                    style={{ fontSize: 11, color: T.tc3, background: "transparent",
+                      border: "none", cursor: "pointer", textDecoration: "underline" }}>
+                    {isAf ? "Kanselleer" : "Cancel"}
+                  </button>
+                )}
+                {/* Fallback: text input in voice mode */}
+                <div style={{ width: "100%", display: "flex", gap: 6 }}>
+                  <input value={input}
+                    onChange={function(e) { setInput(e.target.value); }}
+                    onKeyDown={function(e) { if (e.key === "Enter" && !e.shiftKey) { stopTTS(); onSend(); } }}
+                    placeholder={isAf ? "Of tik hier…" : "Or type here…"}
+                    disabled={loading || micActive}
+                    style={{ flex: 1, background: "rgba(255,255,255,.04)",
+                      border: "1px solid rgba(255,255,255,.1)", borderRadius: 12,
+                      padding: "8px 14px", color: "#fff", fontSize: 13, outline: "none" }} />
+                  {input.trim() && (
+                    <button onClick={function() { onStopTTS(); onSend(); }}
+                      disabled={loading}
+                      style={{ padding: "8px 14px", borderRadius: 12, background: T.ac,
+                        border: "none", color: "#fff", fontWeight: 700,
+                        cursor: "pointer", fontSize: 14 }}>↑</button>
+                  )}
+                </div>
+              </div>
+            ) : (
+              /* TEXT INPUT */
+              <div style={{ display: "flex", gap: 8 }}>
+                <input value={input}
+                  onChange={function(e) { setInput(e.target.value); }}
+                  onKeyDown={function(e) { if (e.key === "Enter" && !e.shiftKey) { stopTTS(); onSend(); } }}
+                  placeholder={isAf ? "Deel wat op jou gemoed is…" : "Share what's on your mind…"}
+                  disabled={loading}
+                  style={{ flex: 1, background: "rgba(255,255,255,.05)",
+                    border: "1px solid " + T.ac + "40", borderRadius: 14,
+                    padding: "10px 16px", color: "#fff", fontSize: 14, outline: "none" }} />
+                <button onClick={function() { stopTTS(); onSend(); }}
+                  disabled={!input.trim() || loading}
+                  style={{ padding: "10px 18px", borderRadius: 14, background: T.ac,
+                    border: "none", color: "#fff", fontWeight: 700,
+                    cursor: "pointer", fontSize: 15 }}>↑</button>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div style={{ padding: "14px 20px", borderTop: "1px solid rgba(255,255,255,.08)",
+            textAlign: "center" }}>
+            <button onClick={function() { onStopTTS(); onClose(); }}
+              style={{ padding: "12px 32px", borderRadius: 14, background: T.ac,
+                border: "none", color: "#fff", fontWeight: 700,
+                cursor: "pointer", fontSize: 15 }}>
+              ✓ {isAf ? "Beëindig Sessie" : "End Session"}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function Planloos() {
   const [tasks,    setTasks]    = useState([]);
   const [goals,    setGoals]    = useState([]);
@@ -667,7 +1511,7 @@ export default function Planloos() {
   const [calFeeds, setCalFeeds] = useState([]);
   const [auditLog, setAuditLog] = useState([]);
   const [stats,    setStats]    = useState({xp:0,streakDays:0,lastDate:null,history:{}});
-  const [cfg,      setCfg]      = useState({theme:"planloos",energy:"morning",pomoDur:25,breakDur:5,lang:"en"});
+  const [cfg,      setCfg]      = useState({theme:"planloos",energy:"morning",pomoDur:25,breakDur:5,lang:"en",sttMode:"webspeech",openAiKey:"",ttsVoice:"nova"});
 
   const [input,      setInput]      = useState("");
   const [expanded,   setExpanded]   = useState(null);
@@ -705,6 +1549,30 @@ export default function Planloos() {
   const [csvErr,     setCsvErr]     = useState("");
   const [weekOff,    setWeekOff]    = useState(0);
 
+
+  const [therapyOpen,    setTherapyOpen]    = useState(false);
+  const [therapyData,    setTherapyData]    = useState({sessions:[],history:[],triage:"unknown",phq9_latest:null,gad7_latest:null,wellbeing_log:[],last_full_assessment:null,crisis_auto_protocol:false,lastActivityAt:null,supportiveOnlySince:null,countryPromptDone:false,assessmentComplete:false,assessmentPhaseActive:false});
+  const [therapyInput,   setTherapyInput]   = useState("");
+  const [therapyLoad,    setTherapyLoad]    = useState(false);
+  const [therapyDone,    setTherapyDone]    = useState(false);
+  const [userCountry,    setUserCountry]    = useState(null);
+  const [contextReady,   setContextReady]   = useState(false);
+  const [voiceMode,      setVoiceMode]      = useState(false);
+  const [micActive,      setMicActive]      = useState(false);
+  const [micTranscript,  setMicTranscript]  = useState("");
+  const [ttsPlaying,     setTtsPlaying]     = useState(false);
+  const [ttsPaused,      setTtsPaused]      = useState(false);
+  const [ttsAudioUrl,    setTtsAudioUrl]    = useState(null);
+  const [voiceThinking,  setVoiceThinking]  = useState(false);
+  const [sttError,       setSttError]       = useState("");
+  const audioRef          = useRef(null);
+  const mediaRecorderRef  = useRef(null);
+  const audioChunksRef    = useRef([]);
+  const recognitionRef    = useRef(null);
+  const therapyParseErrors = useRef(0);
+  const fullClinicalRef    = useRef(null);
+  const therapyInactivityRef = useRef(null);
+
   const lang = cfg.lang||"en";
   const T    = THEMES[cfg.theme]||THEMES.planloos;
 
@@ -712,7 +1580,7 @@ export default function Planloos() {
   useEffect(function() {
     (async function() {
       try {
-        const keys=["fl:tasks","fl:goals","fl:events","fl:habits","fl:stats","fl:cfg","fl:feeds","fl:audit"];
+        const keys=["fl:tasks","fl:goals","fl:events","fl:habits","fl:stats","fl:cfg","fl:feeds","fl:audit","fl:therapy"];
         const res=await Promise.all(keys.map(function(k){ return db.get(k); }));
         if(res[0]&&res[0].value) setTasks(JSON.parse(res[0].value));
         else {
@@ -726,8 +1594,24 @@ export default function Planloos() {
         if(res[5]&&res[5].value) setCfg(function(p){ return Object.assign({},p,JSON.parse(res[5].value)); });
         if(res[6]&&res[6].value) setCalFeeds(JSON.parse(res[6].value));
         if(res[7]&&res[7].value) setAuditLog(JSON.parse(res[7].value));
+        if(res[8]&&res[8].value) setTherapyData(function(p){ return Object.assign({},p,JSON.parse(res[8].value)); });
       } catch(e) {}
     })();
+  }, []);
+
+
+  // Detect user country for localised crisis resources
+  useEffect(function() {
+    db.get("fl:country").then(function(res) {
+      if(res&&res.value) { setUserCountry(res.value); return; }
+      if(navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(function(pos) {
+          reverseGeocodeCountry(pos.coords.latitude,pos.coords.longitude).then(function(code) {
+            if(code) { setUserCountry(code); db.set("fl:country",code); }
+          });
+        }, function() {});
+      }
+    });
   }, []);
 
   function sv(k,v) { db.set(k, JSON.stringify(v)); }
@@ -910,6 +1794,533 @@ export default function Planloos() {
     } catch(e) {}
     finally { setMsLoad(null); }
   }
+
+
+
+  // ─── THERAPY HELPERS ──────────────────────────────────────────────────────
+  function saveTherapy(update) {
+    setTherapyData(function(prev) {
+      const next = Object.assign({}, prev, update);
+      db.set("fl:therapy", JSON.stringify(next));
+      return next;
+    });
+  }
+
+  function parseTherapyResponse(raw) {
+    try {
+      const parsed = JSON.parse(raw.replace(/```json|```/g, "").trim());
+      therapyParseErrors.current = 0;
+      const isAssessment = parsed.session_phase === "assessment";
+      const wasAssessment = therapyData.assessmentPhaseActive;
+      if (isAssessment !== wasAssessment) saveTherapy({ assessmentPhaseActive: isAssessment });
+      return parsed;
+    } catch (e) {
+      therapyParseErrors.current += 1;
+      logEvent("Therapy parse error", { count: therapyParseErrors.current });
+      const forcedTriage = therapyParseErrors.current >= 2 ? "supportive_only" : "unknown";
+      if (therapyParseErrors.current >= 2) logEvent("Therapy stepped down to supportive-only", {});
+      return { message: raw, crisis_flag: false, session_phase: "work", triage: forcedTriage,
+        phq9_score: null, gad7_score: null, wellbeing_score: null, next_session_days: 7, _parse_failed: true };
+    }
+  }
+
+  function assessmentInProgress(history) {
+    if (therapyData.assessmentPhaseActive) return true;
+    if (!history || history.length === 0) return false;
+    const recentAssistant = history
+      .filter(function(m) { return m.role === "assistant" && m.content; })
+      .slice(-4)
+      .map(function(m) {
+        try { const p = JSON.parse(m.content.replace(/```json|```/g, "").trim()); return (p.message || m.content).toLowerCase(); }
+        catch (e) { return m.content.toLowerCase(); }
+      });
+    if (recentAssistant.length === 0) return false;
+    const allPatterns = [
+      "little interest or pleasure","feeling down, depressed","trouble falling or staying asleep",
+      "feeling tired or having little energy","poor appetite or overeating","feeling bad about yourself",
+      "trouble concentrating","moving or speaking so slowly","thoughts that you would be better off dead","past two weeks",
+      "feeling nervous, anxious","not being able to stop or control worrying","worrying too much about different things",
+      "trouble relaxing","being so restless","becoming easily annoyed or irritable","feeling afraid as if something awful",
+      "feeling down, depressed, or hopeless","little interest or pleasure in doing things",
+      "nervous, anxious, or on edge","stop or control worrying",
+    ];
+    return recentAssistant.some(function(msg) {
+      return allPatterns.some(function(pat) { return msg.includes(pat); });
+    });
+  }
+
+  function buildVoiceInstruction(history, assessmentComplete) {
+    const inAssessment = assessmentInProgress(history);
+    if (inAssessment) {
+      return "\n\nVOICE SESSION — ASSESSMENT MODE:\nAsk EXACTLY ONE item per turn. Stop after asking. No context, clarification, or empathy between items. If the user gives a short answer, accept it and move on.";
+    }
+    return "\n\nVOICE SESSION — CONVERSATION MODE:\nThe user is speaking. 2–4 sentences max. No bullet points or markdown. One question per turn then stop.\nSHORT ANSWER RULE: If the user gives a short answer (fewer than 8 words), reflect briefly and go deeper. If short answer twice in a row on same topic, offer to move on instead of probing.";
+  }
+
+  function detectSessionModality(therapyData, sessionPhase, currentHistory) {
+    if (sessionPhase === "crisis") return "crisis";
+    if (assessmentInProgress(currentHistory || therapyData.history)) return "assessment";
+    if (!therapyData.assessmentComplete && !therapyData.phq9_latest) return "assessment";
+    const currentSignals = (currentHistory || therapyData.history || []).filter(function(m) { return m.content; })
+      .slice(-6).map(function(m) {
+        try { const p = JSON.parse(m.content.replace(/```json|```/g, "").trim()); return (p.message || m.content).toLowerCase(); }
+        catch (e) { return m.content.toLowerCase(); }
+      }).join(" ");
+    if (/thought record|cognitive distortion|automatic thought|behavioural activation/.test(currentSignals)) return "CBT";
+    if (/distress tolerance|tipp|opposite action|emotion regulation|radical acceptance|wise mind/.test(currentSignals)) return "DBT";
+    if (/defusion|psychological flexibility|committed action|valued living|acceptance|hexaflex/.test(currentSignals)) return "ACT";
+    if (/change talk|ambivalence|confidence ruler|decisional balance|readiness to change/.test(currentSignals)) return "MI";
+    if (/self.compassion|inner critic|compassionate self|shame|soothing rhythm/.test(currentSignals)) return "CFT";
+    if (/sleep restriction|sleep efficiency|stimulus control|sleep window|sleep diary|insomnia/.test(currentSignals)) return "CBT-I";
+    if (/suicid|self.harm|ending.*life|not want to be here|hopeless.*future/.test(currentSignals)) return "crisis";
+    const triage = therapyData.triage || "unknown";
+    if (triage === "high" || triage === "supportive_only") return "supportive";
+    return null;
+  }
+
+  function handleSetCountry(code, confirm) {
+    setUserCountry(code);
+    db.set("fl:country", code);
+    if (confirm) saveTherapy({ countryPromptDone: true });
+  }
+
+  function resetSupportiveOnly() {
+    saveTherapy({ triage: "unknown", supportiveOnlySince: null });
+    logEvent("Therapy supportive-only reset by user", {});
+  }
+
+  async function archiveAndResetSession(reason) {
+    const prev = therapyData;
+    const realMessages = (prev.history || []).filter(function(m) {
+      return m.content && m.content.trim() && m.role === "user";
+    });
+    let summary = null;
+    if (realMessages.length >= 2) {
+      try {
+        const transcript = (prev.history || []).filter(function(m) { return m.content && m.content.trim(); })
+          .map(function(m) {
+            if (m.role === "user") return "User: " + m.content;
+            try { const p = JSON.parse(m.content.replace(/```json|```/g, "").trim()); return "Therapist: " + (p.message || m.content); }
+            catch (e) { return "Therapist: " + m.content; }
+          }).slice(0, 20).join("\n");
+        const langSuffix = lang === "af" ? " Respond in Afrikaans." : "";
+        const raw = await aiCall(P_SESSION_SUMMARY + langSuffix, "Session transcript:\n" + transcript, []);
+        summary = raw.trim();
+      } catch (e) { summary = null; }
+    }
+    if (realMessages.length > 0) {
+      const entry = {
+        date: toISODate(new Date()), triage: prev.triage,
+        phq9: prev.phq9_latest?.score ?? null, gad7: prev.gad7_latest?.score ?? null,
+        wellbeing: (prev.wellbeing_log || []).slice(-1)[0]?.score ?? null,
+        turns: (prev.history || []).length, archivedAt: new Date().toISOString(),
+        reason, summary,
+      };
+      const existing = await loadSessionArchive();
+      const updated = [entry, ...existing].slice(0, 50);
+      saveSessionArchive(updated);
+      setSessionArchive(updated);
+    }
+    setTherapyData(function(current) {
+      const next = Object.assign({}, current, {
+        history: [], lastActivityAt: null, sessions: undefined,
+      });
+      db.set("fl:therapy", JSON.stringify(next));
+      return next;
+    });
+    logEvent("Therapy session archived", { reason, hasSummary: !!summary });
+    setTherapyOpen(false);
+    setTherapyDone(false);
+    therapyParseErrors.current = 0;
+  }
+
+  async function generateAndArchiveSession(history, parsed, currentUpdates) {
+    const sessionEntry = {
+      date: toISODate(new Date()),
+      triage: parsed.triage || therapyData.triage,
+      phq9: parsed.phq9_score ?? therapyData.phq9_latest?.score ?? null,
+      gad7: parsed.gad7_score ?? therapyData.gad7_latest?.score ?? null,
+      wellbeing: parsed.wellbeing_score ?? null,
+      turns: history.filter(function(m) { return m.role === "user" && m.content; }).length,
+      archivedAt: new Date().toISOString(), reason: "completed", summary: null,
+    };
+    try {
+      const transcript = history.filter(function(m) { return m.content && m.content.trim(); })
+        .map(function(m) {
+          if (m.role === "user") return "User: " + m.content;
+          try { const p = JSON.parse(m.content.replace(/```json|```/g, "").trim()); return "Therapist: " + (p.message || m.content); }
+          catch (e) { return "Therapist: " + m.content; }
+        }).slice(0, 20).join("\n");
+      const langSuffix = lang === "af" ? " Respond in Afrikaans." : "";
+      const summaryRaw = await aiCall(P_SESSION_SUMMARY + langSuffix, "Session transcript:\n" + transcript, []);
+      sessionEntry.summary = summaryRaw.trim();
+    } catch (e) { logEvent("Therapy summary generation failed", {}); }
+    const existing = await loadSessionArchive();
+    const updated = [sessionEntry, ...existing].slice(0, 50);
+    saveSessionArchive(updated);
+    setSessionArchive(updated);
+    fullClinicalRef.current = buildFullClinicalPicture(updated, therapyData);
+    logEvent("Therapy session archived", { reason: "completed", hasSummary: !!sessionEntry.summary });
+  }
+
+  async function startTherapySession() {
+    setTherapyOpen(true);
+    setTherapyDone(false);
+    setTherapyLoad(true);
+    therapyParseErrors.current = 0;
+    const appSnapshot = buildTherapyContext({ tasks, habits, goals, stats, events });
+    const lastSummary = await loadSessionArchive().then(function(a) { return a[0]?.summary || null; }).catch(function() { return null; });
+    const langInstruction = lang === "af"
+      ? "\n\nSESSION LANGUAGE: Afrikaans. Respond in Afrikaans. Match code-switching."
+      : "\n\nSESSION LANGUAGE: English.";
+    const fastContext = [
+      lastSummary ? "Last session: " + lastSummary : null,
+      therapyData.phq9_latest ? "Recent PHQ-9: " + therapyData.phq9_latest.score : null,
+      therapyData.gad7_latest ? "Recent GAD-7: " + therapyData.gad7_latest.score : null,
+      therapyData.triage && therapyData.triage !== "unknown" ? "Current triage: " + therapyData.triage : null,
+    ].filter(Boolean).join("\n");
+    const triageOverride = therapyData.triage === "supportive_only"
+      ? "\n\nMODE OVERRIDE: SUPPORTIVE_ONLY. Warm support only. No techniques." : "";
+    const hasHistory = !!(therapyData.phq9_latest || lastSummary);
+    const openingPrompt = hasHistory
+      ? "Welcome the user back warmly. Open with a brief, natural check-in — one or two sentences."
+      : "Start a first session. Open with a single warm check-in sentence.";
+    try {
+      const raw = await aiCall(
+        P_THERAPIST_SYSTEM + langInstruction + triageOverride
+          + "\n\nQUICK CONTEXT (full history loading):\n" + fastContext
+          + "\n\nAPP SNAPSHOT:\n" + appSnapshot,
+        openingPrompt, []
+      );
+      const parsed = parseTherapyResponse(raw);
+      const newHistory = [{ role: "user", content: "" }, { role: "assistant", content: raw }];
+      saveTherapy({ history: newHistory, triage: parsed.triage || therapyData.triage, lastActivityAt: new Date().toISOString() });
+    } catch (e) {
+      const fallbackMsg = lang === "af"
+        ? "Hoe gaan dit met jou — oor die algemeen die laaste tyd?"
+        : "How have you been doing — generally, lately?";
+      saveTherapy({
+        history: [{ role: "assistant", content: JSON.stringify({ message: fallbackMsg, crisis_flag: false,
+          session_phase: "checkin", triage: therapyData.triage || "unknown", phq9_score: null,
+          gad7_score: null, wellbeing_score: null, next_session_days: 7 }) }],
+        lastActivityAt: new Date().toISOString(),
+      });
+    } finally { setTherapyLoad(false); }
+  }
+
+  async function sendTherapy() {
+    const msg = therapyInput.trim();
+    if (!msg || therapyLoad) return;
+    setTherapyInput("");
+    setTherapyLoad(true);
+    const activityTs = new Date().toISOString();
+    const appSnapshot = buildTherapyContext({ tasks, habits, goals, stats, events });
+    const langInstruction = lang === "af"
+      ? "\n\nSESSION LANGUAGE: Afrikaans. Match code-switching."
+      : "\n\nSESSION LANGUAGE: English.";
+    const triageOverride = (therapyData.triage === "supportive_only" || therapyParseErrors.current >= 2)
+      ? "\n\nMODE OVERRIDE: SUPPORTIVE_ONLY. Warm support only. No techniques." : "";
+    const reassessmentDue = !therapyData.last_full_assessment
+      || (Date.now() - new Date(therapyData.last_full_assessment).getTime()) / 86400000 >= 14;
+    const reassessmentInstruction = reassessmentDue
+      ? "\n\nREASSESSMENT DUE: Administer PHQ-9 and GAD-7 this session if not already done." : "";
+    const clinicalContext = contextReady && fullClinicalRef.current
+      ? "\n\nFULL CLINICAL PICTURE:\n" + fullClinicalRef.current
+      : (therapyData.phq9_latest
+          ? "\n\nCLINICAL CONTEXT: PHQ-9 " + therapyData.phq9_latest.score + ", GAD-7 " + (therapyData.gad7_latest?.score ?? "?")
+          : "");
+    const newHistory = [...therapyData.history, { role: "user", content: msg }];
+    saveTherapy({ history: newHistory, lastActivityAt: activityTs });
+    try {
+      const visibleHistory = newHistory.filter(function(m) { return m.content; }).map(function(m) {
+        return {
+          role: m.role === "assistant" ? "assistant" : "user",
+          content: m.role === "assistant" ? parseTherapyResponse(m.content).message : m.content
+        };
+      });
+      const assessmentInstruction = assessmentInProgress(newHistory)
+        ? "\n\nASSESSMENT MODE: Ask ONE item per turn. No reflection between items." : "";
+      const raw = await aiCall(
+        P_THERAPIST_SYSTEM + langInstruction + triageOverride + reassessmentInstruction
+          + assessmentInstruction + clinicalContext + "\n\nAPP SNAPSHOT:\n" + appSnapshot,
+        null, visibleHistory
+      );
+      const parsed = parseTherapyResponse(raw);
+      const updatedHistory = [...newHistory, { role: "assistant", content: raw }];
+      const updates = { history: updatedHistory, lastActivityAt: activityTs };
+      if (parsed.triage && parsed.triage !== "unknown" && therapyParseErrors.current < 2) updates.triage = parsed.triage;
+      if (therapyParseErrors.current >= 2) {
+        updates.triage = "supportive_only";
+        if (!therapyData.supportiveOnlySince) updates.supportiveOnlySince = new Date().toISOString();
+      }
+      if (parsed.phq9_score != null) updates.phq9_latest = { score: parsed.phq9_score, date: toISODate(new Date()) };
+      if (parsed.gad7_score != null) updates.gad7_latest = { score: parsed.gad7_score, date: toISODate(new Date()) };
+      if (parsed.phq9_score != null && parsed.gad7_score != null) {
+        updates.assessmentComplete = true;
+        updates.last_full_assessment = toISODate(new Date());
+        updates.assessmentPhaseActive = false;
+      }
+      if (parsed.wellbeing_score != null) {
+        updates.wellbeing_log = [...(therapyData.wellbeing_log || []),
+          { date: toISODate(new Date()), score: parsed.wellbeing_score }].slice(-30);
+      }
+      if (parsed.session_phase === "close") {
+        generateAndArchiveSession(updatedHistory, parsed, updates);
+        updates.history = [];
+        updates.lastActivityAt = null;
+        setTherapyDone(true);
+      }
+      saveTherapy(updates);
+    } catch (e) {
+      const errMsg = lang === "af" ? "Iets het verkeerd gegaan." : "Something went wrong.";
+      saveTherapy({
+        history: [...newHistory, { role: "assistant", content: JSON.stringify({
+          message: errMsg, crisis_flag: false, session_phase: "work", triage: therapyData.triage,
+          phq9_score: null, gad7_score: null, wellbeing_score: null, next_session_days: 7 }) }],
+        lastActivityAt: activityTs,
+      });
+    } finally { setTherapyLoad(false); }
+  }
+
+  async function sendTherapyVoice(text) {
+    if (!text.trim() || therapyLoad) return;
+    stopTTS();
+    setVoiceThinking(true);
+    setMicTranscript("");
+    const msg = text.trim();
+    setTherapyLoad(true);
+    const activityTs = new Date().toISOString();
+    const appSnapshot = buildTherapyContext({ tasks, habits, goals, stats, events });
+    const langInstruction = lang === "af"
+      ? "\n\nSESSION LANGUAGE: Afrikaans. Match code-switching naturally."
+      : "\n\nSESSION LANGUAGE: English.";
+    const triageOverride = (therapyData.triage === "supportive_only" || therapyParseErrors.current >= 2)
+      ? "\n\nMODE OVERRIDE: SUPPORTIVE_ONLY." : "";
+    const reassessmentDue = !therapyData.last_full_assessment
+      || (Date.now() - new Date(therapyData.last_full_assessment).getTime()) / 86400000 >= 14;
+    const reassessmentInstruction = reassessmentDue
+      ? "\n\nREASSESSMENT DUE: Administer PHQ-9 and GAD-7 this session if not already done." : "";
+    const clinicalContext = contextReady && fullClinicalRef.current
+      ? "\n\nFULL CLINICAL PICTURE:\n" + fullClinicalRef.current : "";
+    const newHistory = [...therapyData.history, { role: "user", content: msg }];
+    saveTherapy({ history: newHistory, lastActivityAt: activityTs });
+    try {
+      const visibleHistory = newHistory.filter(function(m) { return m.content; }).map(function(m) {
+        return {
+          role: m.role === "assistant" ? "assistant" : "user",
+          content: m.role === "assistant" ? parseTherapyResponse(m.content).message : m.content
+        };
+      });
+      const voiceInstruction = buildVoiceInstruction(newHistory, therapyData.assessmentComplete);
+      const raw = await aiCall(
+        P_THERAPIST_SYSTEM + langInstruction + voiceInstruction + triageOverride
+          + reassessmentInstruction + clinicalContext + "\n\nAPP SNAPSHOT:\n" + appSnapshot,
+        null, visibleHistory
+      );
+      const parsed = parseTherapyResponse(raw);
+      const updatedHistory = [...newHistory, { role: "assistant", content: raw }];
+      const updates = { history: updatedHistory, lastActivityAt: activityTs };
+      if (parsed.triage && parsed.triage !== "unknown" && therapyParseErrors.current < 2) updates.triage = parsed.triage;
+      if (therapyParseErrors.current >= 2) {
+        updates.triage = "supportive_only";
+        if (!therapyData.supportiveOnlySince) updates.supportiveOnlySince = new Date().toISOString();
+      }
+      if (parsed.phq9_score != null) updates.phq9_latest = { score: parsed.phq9_score, date: toISODate(new Date()) };
+      if (parsed.gad7_score != null) updates.gad7_latest = { score: parsed.gad7_score, date: toISODate(new Date()) };
+      if (parsed.phq9_score != null && parsed.gad7_score != null) {
+        updates.assessmentComplete = true;
+        updates.last_full_assessment = toISODate(new Date());
+        updates.assessmentPhaseActive = false;
+      }
+      if (parsed.wellbeing_score != null) {
+        updates.wellbeing_log = [...(therapyData.wellbeing_log || []),
+          { date: toISODate(new Date()), score: parsed.wellbeing_score }].slice(-30);
+      }
+      if (parsed.session_phase === "close") {
+        generateAndArchiveSession(updatedHistory, parsed, updates);
+        updates.history = [];
+        updates.lastActivityAt = null;
+        setTherapyDone(true);
+      }
+      saveTherapy(updates);
+      setVoiceThinking(false);
+      await speakResponse(parsed.message || raw);
+      if (parsed.crisis_flag) stopTTS();
+    } catch (e) {
+      setVoiceThinking(false);
+      const errMsg = lang === "af" ? "Iets het verkeerd gegaan." : "Something went wrong.";
+      saveTherapy({
+        history: [...newHistory, { role: "assistant", content: JSON.stringify({
+          message: errMsg, crisis_flag: false, session_phase: "work", triage: therapyData.triage,
+          phq9_score: null, gad7_score: null, wellbeing_score: null, next_session_days: 7 }) }],
+        lastActivityAt: activityTs,
+      });
+    } finally { setTherapyLoad(false); }
+  }
+
+  function endTherapySession() {
+    stopTTS();
+    setTherapyOpen(false);
+    setTherapyDone(false);
+    therapyParseErrors.current = 0;
+  }
+
+  function startMic() {
+    if (micActive) return;
+    setSttError("");
+    setMicTranscript("");
+    setMicActive(true);
+    const sttMode = cfg.sttMode || "webspeech";
+    if (sttMode === "whisper") {
+      navigator.mediaDevices.getUserMedia({ audio: true })
+        .then(function(stream) {
+          audioChunksRef.current = [];
+          const recorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
+          mediaRecorderRef.current = recorder;
+          recorder.ondataavailable = function(e) { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
+          recorder.start(250);
+        })
+        .catch(function(e) { setSttError("Mic access denied."); setMicActive(false); });
+    } else {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) { setSttError("Speech recognition not supported. Try Chrome."); setMicActive(false); return; }
+      const recognition = new SpeechRecognition();
+      recognitionRef.current = recognition;
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = lang === "af" ? "af-ZA" : "en-IE";
+      recognition.onresult = function(event) {
+        let interim = "", final = "";
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const t = event.results[i][0].transcript;
+          if (event.results[i].isFinal) final += t; else interim += t;
+        }
+        setMicTranscript(function(prev) { return (prev + final).trim() + (interim ? " " + interim : ""); });
+      };
+      recognition.onerror = function(e) { if (e.error !== "aborted") setSttError("Speech error: " + e.error); setMicActive(false); };
+      recognition.onend = function() {};
+      recognition.start();
+    }
+  }
+
+  async function stopMicAndSend() {
+    if (!micActive) return;
+    setMicActive(false);
+    const sttMode = cfg.sttMode || "webspeech";
+    if (sttMode === "whisper") {
+      const recorder = mediaRecorderRef.current;
+      if (!recorder) return;
+      recorder.stop();
+      recorder.stream.getTracks().forEach(function(t) { t.stop(); });
+      await new Promise(function(resolve) { recorder.onstop = resolve; });
+      const blob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+      if (blob.size < 1000) { setSttError("No audio captured."); return; }
+      setVoiceThinking(true);
+      try {
+        const text = await transcribeWithWhisper(blob, cfg.openAiKey, lang);
+        if (text.trim()) { setMicTranscript(text.trim()); setTimeout(function() { sendTherapyVoice(text.trim()); }, 600); }
+        else { setSttError("Could not understand audio."); setVoiceThinking(false); }
+      } catch (e) { setSttError("Whisper failed: " + e.message); setVoiceThinking(false); }
+    } else {
+      if (recognitionRef.current) recognitionRef.current.stop();
+      const text = micTranscript.trim();
+      if (text) { setTimeout(function() { sendTherapyVoice(text); }, 400); }
+      else { setSttError("Nothing heard. Try again."); }
+    }
+  }
+
+  function cancelMic() {
+    setMicActive(false);
+    setMicTranscript("");
+    if (recognitionRef.current) recognitionRef.current.abort();
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      mediaRecorderRef.current.stop();
+      mediaRecorderRef.current.stream?.getTracks().forEach(function(t) { t.stop(); });
+    }
+  }
+
+  async function speakResponse(text) {
+    if (ttsAudioUrl) URL.revokeObjectURL(ttsAudioUrl);
+    setTtsAudioUrl(null);
+    setTtsPlaying(false);
+    setTtsPaused(false);
+    const openAiKey = cfg.openAiKey;
+    if (!openAiKey) {
+      const utt = new SpeechSynthesisUtterance(stripMarkdownForSpeech(text));
+      utt.lang = lang === "af" ? "af-ZA" : "en-IE";
+      utt.rate = 0.92;
+      window.speechSynthesis.speak(utt);
+      return;
+    }
+    try {
+      const url = await fetchTTSAudio(text, cfg.ttsVoice || "nova", openAiKey);
+      if (!url) return;
+      setTtsAudioUrl(url);
+      if (audioRef.current) {
+        audioRef.current.src = url;
+        audioRef.current.playbackRate = 0.95;
+        await audioRef.current.play();
+        setTtsPlaying(true);
+        setTtsPaused(false);
+      }
+    } catch (e) { logEvent("TTS failed", { error: e.message?.slice(0, 60) }); }
+  }
+
+  function toggleTTSPause() {
+    if (!audioRef.current) return;
+    if (audioRef.current.paused) { audioRef.current.play(); setTtsPlaying(true); setTtsPaused(false); }
+    else { audioRef.current.pause(); setTtsPlaying(false); setTtsPaused(true); }
+  }
+
+  function stopTTS() {
+    if (audioRef.current) { audioRef.current.pause(); audioRef.current.currentTime = 0; }
+    setTtsPlaying(false);
+    setTtsPaused(false);
+    window.speechSynthesis.cancel();
+  }
+
+  // Therapy: inactivity timer
+  useEffect(function() {
+    if (therapyData.lastActivityAt && therapyData.history?.length > 1) {
+      const elapsed = Date.now() - new Date(therapyData.lastActivityAt).getTime();
+      if (elapsed >= THERAPY_INACTIVITY_MS) archiveAndResetSession("inactivity_timeout");
+    }
+    if (therapyData.triage === "supportive_only" && therapyData.supportiveOnlySince) {
+      const elapsed = Date.now() - new Date(therapyData.supportiveOnlySince).getTime();
+      if (elapsed >= SUPPORTIVE_ONLY_RESET_MS) {
+        saveTherapy({ triage: "unknown", supportiveOnlySince: null });
+        logEvent("Therapy supportive-only reset", { reason: "24h elapsed" });
+      }
+    }
+  }, []);
+
+  useEffect(function() {
+    if (!therapyData.lastActivityAt || !therapyData.history?.length) return;
+    clearTimeout(therapyInactivityRef.current);
+    const elapsed = Date.now() - new Date(therapyData.lastActivityAt).getTime();
+    const remaining = THERAPY_INACTIVITY_MS - elapsed;
+    if (remaining <= 0) { archiveAndResetSession("inactivity_timeout"); }
+    else { therapyInactivityRef.current = setTimeout(function() { archiveAndResetSession("inactivity_timeout"); }, remaining); }
+    return function() { clearTimeout(therapyInactivityRef.current); };
+  }, [therapyData.lastActivityAt]);
+
+  // Therapy: background context loader
+  useEffect(function() {
+    if (!therapyOpen) return;
+    let cancelled = false;
+    setContextReady(false);
+    fullClinicalRef.current = "";
+    (async function() {
+      try {
+        const archive = await loadSessionArchive();
+        if (cancelled) return;
+        setSessionArchive(archive);
+        fullClinicalRef.current = buildFullClinicalPicture(archive, therapyData);
+        setContextReady(true);
+      } catch (e) { if (!cancelled) setContextReady(true); }
+    })();
+    return function() { cancelled = true; };
+  }, [therapyOpen]);
 
   // Habits
   function saveHabit(h) {
@@ -1146,7 +2557,7 @@ export default function Planloos() {
         {/* Tabs */}
         <div style={{display:"flex",gap:2,background:T.surf,borderRadius:14,padding:3,marginBottom:14,border:"1px solid "+T.border,overflowX:"auto"}}>
           {tabs.map(function(label, i) {
-            const keys=["tasks","done","calendar","habits","goals","plan","stats"];
+            const keys=["tasks","done","calendar","habits","goals","plan","stats","mind"];
             const key=keys[i];
             const counts={tasks:pend.length,done:done.length,habits:habits.length,goals:goals.length,calendar:events.length};
             const cnt=counts[key];
@@ -1388,6 +2799,19 @@ export default function Planloos() {
           </div>
         )}
 
+        {/* Mind — AI Therapist */}
+        {tab==="mind" && (
+          <TherapyTab
+            therapyData={therapyData}
+            onStartSession={startTherapySession}
+            onSetCountry={handleSetCountry}
+            onResetSupportive={resetSupportiveOnly}
+            userCountry={userCountry}
+            T={T}
+            lang={lang}
+          />
+        )}
+
         {/* Plan */}
         {tab==="plan" && (
           <div style={{animation:"fadeIn .2s ease"}}>
@@ -1481,6 +2905,7 @@ export default function Planloos() {
       {eodOpen    && <EODModal msgs={eodMsgs} input={eodIn} setInput={setEodIn} onSend={sendEOD} onClose={function(){ setEodOpen(false); }} loading={eodLoad} done={eodDone} T={T} lang={lang}/>}
       {settings   && <SettingsModal cfg={cfg} onSave={function(u){ setCfg(u); sv("fl:cfg",u); }} onClose={function(){ setSettings(false); }} T={T} lang={lang}/>}
       {habitModal && <HabitModal existing={habitModal==="add"?null:habitModal} onSave={saveHabit} onClose={function(){ setHabitModal(null); }} T={T} lang={lang}/>}
+      {therapyOpen && <TherapyModal therapyData={therapyData} input={therapyInput} setInput={setTherapyInput} onSend={sendTherapy} onClose={endTherapySession} loading={therapyLoad} done={therapyDone} parseResponse={parseTherapyResponse} userCountry={userCountry} contextReady={contextReady} lang={lang} T={T} voiceMode={voiceMode} setVoiceMode={setVoiceMode} micActive={micActive} micTranscript={micTranscript} ttsPlaying={ttsPlaying} ttsPaused={ttsPaused} voiceThinking={voiceThinking} sttError={sttError} setSttError={setSttError} onStartMic={startMic} onStopMic={stopMicAndSend} onCancelMic={cancelMic} onToggleTTSPause={toggleTTSPause} onStopTTS={stopTTS} audioRef={audioRef}/>}
     </div>
   );
 }
